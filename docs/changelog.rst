@@ -111,6 +111,11 @@ New features:
   titles.
   Thanks to :user:`cole-miller`.
   :bug:`3459`
+* Fields in queries now fall back to an item's album and check its fields too.
+  Notably, this allows querying items by an album flex attribute (also in path
+  configuration). Plugins: Also applies to normal item access.
+  Thanks to :user:`FichteFoll`.
+  :bug:`2797` :bug:`2988`
 
 Fixes:
 
