@@ -115,7 +115,7 @@ class MbSeriesPlugin(BeetsPlugin):
     def commands(self):
         def func(lib, opts, args):
             """
-            Command handler for the mb_artists function.
+            Command handler for the series function.
             """
             move = ui.should_move(opts.move)
             pretend = opts.pretend
