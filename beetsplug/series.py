@@ -19,23 +19,37 @@ from __future__ import division, absolute_import, print_function
 
 from beets.plugins import BeetsPlugin
 from beets import ui, util
-from collections import defaultdict
+from beets.autotag.mb import musicbrainzngs
+from collections import defaultdict, namedtuple
 
 import re
-import musicbrainzngs
-
-musicbrainzngs.set_useragent('beets plugin', '0.0.1', '')
 
 MBID_REGEX = r"(\d|\w){8}-(\d|\w){4}-(\d|\w){4}-(\d|\w){4}-(\d|\w){12}"
 ORDER_ATTR_ID = 'a59c5830-5ec7-38fe-9a21-c7ea54f6650a'
 
-RELEASE_SERIES = 'Release series'
-RELEASE_GROUP_SERIES = 'Release group series'
+SeriesType = namedtuple('SeriesType', [
+    'name',
+    'relation',
+    'relation_list',
+    'get_field'
+])
 
-SERIES_KEY = {
-    RELEASE_SERIES: 'release-relation-list',
-    RELEASE_GROUP_SERIES: 'release_group-relation-list',
-}
+TYPES = [
+    SeriesType(
+        name='Release series',
+        relation='release-rels',
+        relation_list='release-relation-list',
+        get_field=lambda a: a.mb_albumid
+    ),
+    SeriesType(
+        name='Release group series',
+        relation='release-group-rels',
+        relation_list='release_group-relation-list',
+        get_field=lambda a: a.mb_releasegroupid
+    ),
+]
+
+SERIES_RELS = [t.relation for t in TYPES]
 
 
 def apply_item_changes(lib, item, move, pretend, write):
@@ -51,35 +65,39 @@ def apply_item_changes(lib, item, move, pretend, write):
         item.store()
 
 
-def get_field(series, a):
-    if series['type'] == RELEASE_SERIES:
-        return a.mb_albumid
-    if series['type'] == RELEASE_GROUP_SERIES:
-        return a.mb_releasegroupid
+def get_series_type(name):
+    for t in TYPES:
+        if t.name == name:
+            return t
+    return None
 
 
-def get_order(item):
+def get_attribute(item, attr):
     try:
         return [x['value'] for x in item['attributes']
-                if x['type-id'] == ORDER_ATTR_ID][0]
+                if x['type-id'] == attr][0]
     except KeyError:
         return None
 
 
 def get_series(mb_series_id):
 
-    rels = ['release-rels', 'release-group-rels']
-    series = musicbrainzngs.get_series_by_id(mb_series_id, rels)
+    series = musicbrainzngs.get_series_by_id(mb_series_id, SERIES_RELS)
+    series_type = get_series_type(series['series']['type'])
+
+    if not series_type:
+        return
+
     data = {
         'id': series['series']['id'],
         'name': series['series']['name'],
-        'type': series['series']['type'],
+        'type': series_type,
         'items': defaultdict(dict),
     }
 
-    for item in series['series'][SERIES_KEY[data['type']]]:
+    for item in series['series'][data['type'].relation_list]:
         data['items'][item['target']] = {
-            'order': get_order(item),
+            'order': get_attribute(item, ORDER_ATTR_ID),
             'name': data['name'],
             'id': data['id'],
         }
@@ -88,6 +106,13 @@ def get_series(mb_series_id):
 
 
 class MbSeriesPlugin(BeetsPlugin):
+
+    mapping = {
+        'id': 'id',
+        'name': 'name',
+        'volume': 'order',
+    }
+
     def __init__(self):
         super(MbSeriesPlugin, self).__init__()
 
@@ -97,17 +122,14 @@ class MbSeriesPlugin(BeetsPlugin):
                 'id': {
                     'field_name': 'mb_seriesid',
                     'write': True,
-                    'attr': 'id',
                 },
                 'name': {
                     'field_name': 'series',
                     'write': True,
-                    'attr': 'name',
                 },
                 'volume': {
                     'field_name': 'volume',
                     'write': True,
-                    'attr': 'order',
                 },
             }
         })
@@ -166,17 +188,23 @@ class MbSeriesPlugin(BeetsPlugin):
         if not series:
             return
 
+        fields = []
+        for key, field in self.config['fields'].items():
+            if field['write']:
+                field['attr'] = self.mapping[key]
+                fields.append(field)
+
         for a in lib.albums(query):
             if not self.is_mb_release(a):
                 continue
 
-            mbid = get_field(series, a)
+            mbid = series['type'].get_field(a)
             if not series['items'][mbid]:
                 continue
 
             item = series['items'][mbid]
 
-            for f in [f for f in self.config['fields'].values() if f['write']]:
+            for f in fields:
                 if item[f['attr'].get()]:
                     a[f['field_name'].get()] = item[f['attr'].get()]
 
